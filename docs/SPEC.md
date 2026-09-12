@@ -1,6 +1,6 @@
 # MCP Apps companion specification
 
-Status: 0.2.0 published; 0.2.1 compatibility patch in progress
+Status: 0.2.1 published; production deployment configuration pending
 Task: T05, approved 2026-09-12
 
 ## Product

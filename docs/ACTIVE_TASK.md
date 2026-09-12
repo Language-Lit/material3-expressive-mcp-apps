@@ -2,9 +2,10 @@
 
 ## T05 — 0.2.1 core prerelease compatibility
 
-Status: active
+Status: complete
 Approved: 2026-09-12 (owner requested deployment of the current documentation
 site, which must install with the published `1.3.0-rc.1` core candidate.)
+Completed: 2026-09-12
 
 ### Scope
 
@@ -18,6 +19,16 @@ implementation, or runtime dependency changes are included.
 - `npm run verify` and `npm run playground:build` pass at `0.2.1`.
 - npm publishes `0.2.1` with the expanded core peer range.
 - A strict site install resolves core `1.3.0-rc.1` and all three companions.
+
+### Verification record
+
+- `npm run verify` passed: 9 test files / 69 tests, typecheck, distributable
+  build, package boundaries, and package identity; `npm run playground:build`
+  also passed.
+- npm published `@language-lit/material3-expressive-mcp-apps@0.2.1`; registry
+  metadata exposes the expanded core peer range.
+- The documentation site's strict lockfile resolves this release alongside
+  core `1.3.0-rc.1`.
 
 
 ## T04 — Compatibility, release and deployment readiness
