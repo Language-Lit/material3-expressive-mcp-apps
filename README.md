@@ -16,7 +16,8 @@ npm run verify
 npm run playground
 ```
 
-Open http://localhost:5473 and call the forecast tool. Refresh calls an app-only
+Open http://localhost:5473 and call the forecast tool. The dev command also starts
+the sandbox proxy at http://127.0.0.1:5474. Refresh calls an app-only
 server tool; selecting a day updates model context; Add to chat reports a user
 message to the host. This is deterministic sample data with no model/backend.
 `npm run playground:build` builds both the host and a self-contained iframe app.
@@ -35,11 +36,11 @@ import { Material3Provider } from '@language-lit/material3-expressive'
 import { McpAppFrame, useMcpAppResource } from '@language-lit/material3-expressive-mcp-apps'
 import type { Client } from '@modelcontextprotocol/client'
 
-export function ToolView({ client, uri }: { client: Client; uri: string }) {
+export function ToolView({ client, uri, sandboxUrl }: { client: Client; uri: string; sandboxUrl: string }) {
   const { resource, error } = useMcpAppResource(client, uri)
   if (error) return <p role="alert">{error.message}</p>
   return <Material3Provider>{resource &&
-    <McpAppFrame client={client} resource={resource} title="Tool app" />
+    <McpAppFrame client={client} resource={resource} sandboxUrl={sandboxUrl} title="Tool app" />
   }</Material3Provider>
 }
 ```
@@ -72,14 +73,36 @@ The playground server is a complete example.
 
 This is an MCP Apps adapter, not an agent runtime, server, or authentication
 system. Hosts own tool authorization, resource trust, permissions, and message
-dispatch. The default iframe has an opaque origin and a deny-by-default CSP;
-resource metadata opens declared domains only after the host accepts them.
-A `sandboxUrl` requires a host-operated proxy that enforces resource policy.
+dispatch. Browser embedding requires `sandboxUrl` pointing to a host-operated HTTP(S)
+proxy on a different origin. Missing or same-origin proxy URLs produce an error
+without loading the app. The outer proxy iframe has fixed sandbox permissions;
+`sandbox` configures its inner view. The proxy must enforce resource CSP and
+validate message sources; resource permissions remain a host trust decision.
+This is a migration from 0.1.0's direct `srcdoc` default. Custom `transport`
+implementations are an explicit escape hatch for native hosts and tests; those
+hosts own their embedding policy. See [the local proxy fixture](playground/proxy-server.ts)
+and [its relay](playground/proxy.ts) for a working example. Production deployments
+must configure their trusted host origins and resource policy.
+
 Do not grant same-origin access to untrusted HTML on the host's own origin.
+
+For graceful host closure, set `active={false}`, wait for
+`onStatusChange('closed')`, then unmount. The frame sends `ui/resource-teardown`,
+waits for acknowledgement (up to one second), and disconnects. New app requests
+are rejected as soon as closing starts. App-requested teardown follows the same
+sequence; `onTeardownRequest` runs after disconnection. Resource replacement
+also waits for teardown. Immediate React unmount sends the request before DOM
+removal but cannot await a response; use `active` when the app needs to persist
+state. The status union now includes `closing`.
+
+Controlled display-mode requests report the mode actually committed by the
+owner. If the owner defers a transition, the reply retains the current mode;
+the eventual update arrives through host context.
 
 Fullscreen is a CSS display mode with exit controls, not a modal dialog.
 Custom host palettes are projected into MCP style variables; the app's Material
-palette is its own `theme` prop. Host light/dark mode is followed automatically.
+palette is its own `theme` prop. Host light/dark mode is followed automatically. An app `colorMode` override
+also controls the document theme and native controls, including system mode.
 See [the specification](docs/SPEC.md) for mappings and the supported boundary.
 
 Compatibility is tested against ext-apps/client 2.0.0 and core 1.2.2.
@@ -94,7 +117,8 @@ npm run playground:build
 M3E_CHROMIUM_PATH=/path/to/chromium npm run test:browser
 ```
 
-The browser audit serves the production playground, runs interactions offline,
+The browser audit serves the production playground and a separate-origin proxy,
+verifies CSP response headers and closing/reopening, runs loaded-app interactions offline,
 checks host and app layouts at 320, 390 and 1440px in light and dark mode, and
 verifies that the browser blocks an undeclared connection through CSP. It saves
 screenshots to a temporary directory. Tests use a real SDK connection and a

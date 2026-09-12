@@ -185,6 +185,29 @@ describe('McpAppProvider', () => {
     }
   })
 
+  it.each(['light', 'dark', 'system'] as const)('applies the resolved %s override to the document and restores it', async (colorMode) => {
+    const [hostTransport, appTransport] = InMemoryTransport.createLinkedPair()
+    const bridge = new AppBridge(null, { name: 'h', version: '1' }, {}, { hostContext: { theme: colorMode === 'dark' ? 'light' : 'dark' } })
+    await bridge.connect(hostTransport)
+    document.documentElement.setAttribute('data-theme', 'previous')
+    document.documentElement.style.setProperty('color-scheme', 'light dark', 'important')
+    const provider = (applyDocumentColorScheme = true) => <McpAppProvider appInfo={{ name: 'a', version: '1' }} transport={appTransport} autoResize={false} colorMode={colorMode} applyDocumentColorScheme={applyDocumentColorScheme}><Probe /></McpAppProvider>
+    const view = render(provider())
+    try {
+      await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('connected'))
+      const resolved = colorMode === 'system' ? 'light' : colorMode
+      expect(document.documentElement.style.colorScheme).toBe(resolved)
+      expect(document.documentElement.getAttribute('data-theme')).toBe(resolved)
+      view.rerender(provider(false))
+      expect(document.documentElement.getAttribute('data-theme')).toBe('previous')
+      expect(document.documentElement.style.colorScheme).toBe('light dark')
+      expect(document.documentElement.style.getPropertyPriority('color-scheme')).toBe('important')
+      view.rerender(provider())
+      view.unmount()
+      expect(document.documentElement.getAttribute('data-theme')).toBe('previous')
+    } finally { cleanup(); await bridge.close() }
+  })
+
   it('throws outside the provider', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {

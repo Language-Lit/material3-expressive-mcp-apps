@@ -15,6 +15,9 @@ import { FORECAST_URI, connectDemoServer } from './server'
 
 type ColorMode = 'light' | 'dark' | 'system'
 
+const sandboxUrl = new URL(new URLSearchParams(location.search).get('sandboxUrl') ?? 'http://127.0.0.1:5474/sandbox.html')
+sandboxUrl.searchParams.set('hostOrigin', location.origin)
+
 const CITIES = ['Lisbon', 'São Paulo', 'Tokyo', 'Reykjavík']
 
 interface LogEntry {
@@ -23,6 +26,7 @@ interface LogEntry {
 }
 
 export function App() {
+  const [active, setActive] = useState(true)
   const [colorMode, setColorMode] = useState<ColorMode>('system')
   const [client, setClient] = useState<Client | null>(null)
   const [tool, setTool] = useState<Tool | undefined>(undefined)
@@ -102,6 +106,9 @@ export function App() {
             <Button variant="filled" onClick={() => void run()} disabled={!client || !resource}>
               Call get_forecast
             </Button>
+            <Button variant="outlined" disabled={status === 'connecting' || status === 'closing' || status === 'idle'} onClick={() => setActive(status === 'closed')}>
+              {status === 'closed' ? 'Reopen app' : 'Close app'}
+            </Button>
             <SegmentedButtonGroup
               multiple
               segments={[
@@ -136,6 +143,8 @@ export function App() {
             {client && resource && tool ? (
               <McpAppFrame
                 client={client}
+                sandboxUrl={sandboxUrl.href}
+                active={active}
                 resource={resource}
                 toolInfo={{ id: 1, tool }}
                 toolInput={toolInput}

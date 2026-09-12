@@ -1,5 +1,51 @@
 # Active task
 
+## T03 — Fix audit findings
+
+Status: complete
+Completed: 2026-09-12
+Approved: 2026-09-12 (owner requested all audited issues be fixed)
+
+### Scope
+
+Require a separate-origin proxy for browser embedding; add a working two-origin
+playground fixture. Correct controlled display-mode responses, graceful resource
+teardown, post-close access, and document color-mode overrides. Add regression
+and browser coverage and update the compatibility contract. No publication,
+commit, runtime dependency, or public export-path changes.
+
+### Acceptance
+
+- Regression tests for each audited defect, including refused controlled modes,
+  teardown acknowledgement/timeout/replacement/unmount, and closed tool access.
+- Production browser checks through a separate-origin proxy, CSP, modes and themes.
+- `npm run verify` and `npm run playground:build` pass.
+
+
+### Verification record
+
+- `npm run verify` passed: 7 test files, 59 tests, types, distributable build,
+  and package contract checks. No runtime dependency or public path changed.
+- `npm run playground:build` passed and regenerated app/proxy artifacts.
+- Production Chromium audit passed through a separate-origin proxy: handshake,
+  tools, callbacks, modes preserving state, light/dark at 320/390/1440px,
+  CSP response header and blocked undeclared connection, graceful close/reopen.
+- Visual review passed on mobile and desktop; screenshots disable transitions
+  so the captured theme is the completed state rather than an intermediate frame.
+- Added regression coverage for refused/accepted controlled modes, teardown
+  acknowledgement/timeout/resource replacement/immediate unmount, blocked calls
+  while closing and after close, invalid proxy URLs, origin/window validation,
+  and forced light/dark/system document colors with restoration.
+- Migration: browser consumers supply sandboxUrl; hosts use active=false and
+  wait for closed before unmounting when acknowledgement is needed. Immediate
+  React unmount can only send a best-effort teardown request before DOM removal.
+- React 18, other browser engines and external-host interoperability were not
+  newly verified. The two-origin proxy is a local deployment fixture, not a
+  production service. Authentication and host policy remain owner responsibilities.
+- No publication or commit was performed.
+
+---
+
 ## T02 — Publish 0.1.0 to npm
 
 Status: complete

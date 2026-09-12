@@ -4,6 +4,7 @@ import { readFile, stat, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createSandboxServer } from '../playground/generated/proxy-server.mjs'
 import { chromium } from 'playwright-core'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -27,19 +28,24 @@ const server = createServer(async (request, response) => {
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const origin = `http://127.0.0.1:${server.address().port}`
+const proxy = createSandboxServer(await readFile(path.join(root, 'playground/generated/proxy.html'), 'utf8'), [origin])
+await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve))
+const proxyOrigin = `http://127.0.0.1:${proxy.address().port}`
 const browser = await chromium.launch({ executablePath })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: 'light' })
 const page = await context.newPage()
 const errors = []
 const requests = []
+const viewPolicies = []
+page.on('response', (response) => { if (response.url().startsWith(`${proxyOrigin}/views/`)) viewPolicies.push(response.headers()['content-security-policy']) })
 page.on('pageerror', (error) => errors.push(error.message))
 page.on('request', (request) => requests.push({ url: request.url(), method: request.method() }))
 page.on('console', (message) => {
   if (message.type() === 'error') errors.push(message.text())
 })
-const app = () => page.frameLocator('iframe')
+const app = () => page.frameLocator('iframe').frameLocator('iframe')
 try {
-  await page.goto(origin, { waitUntil: 'networkidle' })
+  await page.goto(`${origin}/?sandboxUrl=${encodeURIComponent(`${proxyOrigin}/sandbox.html`)}`, { waitUntil: 'networkidle' })
   await page.locator('[data-status="ready"]').waitFor()
   await context.setOffline(true)
   await page.getByRole('button', { name: 'Call get_forecast', exact: true }).click()
@@ -73,12 +79,14 @@ try {
       await app().getByText(new RegExp(`${colorScheme} theme`)).waitFor()
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Host overflow')
       assert(await app().locator('html').evaluate((element) => element.scrollWidth <= innerWidth), 'App overflow')
-      await page.screenshot({ path: path.join(screenshots, `playground-${width}-${colorScheme}.png`), fullPage: true })
+      await page.screenshot({ path: path.join(screenshots, `playground-${width}-${colorScheme}.png`), animations: 'disabled', fullPage: true })
     }
   }
-  assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts allow-forms')
-  assert((await app().locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content')).includes("connect-src 'none'"))
-  assert.deepEqual(requests.filter((request) => !request.url.startsWith(origin)), [], 'External requests')
+  assert.equal(await page.locator('iframe').getAttribute('sandbox'), 'allow-scripts allow-same-origin allow-forms')
+  assert.equal(await page.frameLocator('iframe').locator('iframe').getAttribute('sandbox'), 'allow-scripts allow-forms')
+  assert.notEqual(new URL(await page.locator('iframe').getAttribute('src')).origin, origin)
+  assert(viewPolicies.some((policy) => policy?.includes("connect-src 'none'")), 'Missing CSP response header')
+  assert.deepEqual(requests.filter((request) => !request.url.startsWith(origin + '/') && !request.url.startsWith(proxyOrigin + '/')), [], 'External requests')
   assert.deepEqual(errors, [], 'Browser errors')
   await context.setOffline(false)
   const violations = await app().locator('html').evaluate(async () => {
@@ -92,6 +100,14 @@ try {
     })
   })
   assert.equal(violations, 'connect-src', 'Browser did not enforce resource CSP')
+  await page.getByRole('button', { name: 'Close app', exact: true }).click()
+  await page.locator('.m3e-mcp-frame[data-status="closed"]').waitFor()
+  assert.equal(await page.locator('iframe').getAttribute('src'), null)
+  await page.getByRole('button', { name: 'Reopen app', exact: true }).click()
+  await page.locator('.m3e-mcp-frame[data-status="ready"]').waitFor()
+  await app().getByRole('heading', { name: 'Lisbon', exact: true }).waitFor()
+  await app().getByRole('button', { name: 'Refresh', exact: true }).click()
+  assert.deepEqual(errors.filter((error) => !error.includes('Content Security Policy') && !error.includes('content security policy')), [], 'Unexpected browser errors')
   process.stdout.write(`Companion browser audit passed. Screenshots: ${screenshots}\n`)
 } catch (error) {
   console.error('Browser errors:', errors)
@@ -102,4 +118,5 @@ try {
 } finally {
   await browser.close()
   server.close()
+  proxy.close()
 }

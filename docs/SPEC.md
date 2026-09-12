@@ -1,7 +1,7 @@
 # MCP Apps companion specification
 
 Status: 0.1.0 published to npm on 2026-09-12
-Task: T01, approved 2026-09-12
+Task: T03, approved 2026-09-12 (unpublished audit fixes)
 
 ## Product
 
@@ -32,20 +32,33 @@ font collector, and CSP builder. App exports `McpAppProvider`, `useMcpApp`,
 The host owns one bridge and iframe per resource. It registers handlers before
 loading HTML, delivers tool input/result/cancellation after initialization,
 forwards host context changes, follows inline height, and supports controlled
-or uncontrolled inline/fullscreen/pip modes without moving the iframe.
+or uncontrolled inline/fullscreen/pip modes without moving the iframe. Controlled
+requests return the committed mode, not an unaccepted request.
+
+`active=false` and app teardown requests stop new app work, send resource teardown,
+wait for acknowledgement or a one-second timeout, disconnect and clear the frame.
+Resource replacement waits for the same cleanup. Immediate React unmount sends
+a best-effort teardown request before DOM removal; use active=false followed by
+the closed status to await persistence before unmounting. `closing` is a lifecycle
+status; `closed` means the bridge is disconnected.
 
 The app provider owns one App connection, exposes protocol state and hooks,
 follows host light/dark mode, applies host style variables/fonts, and represents
-safe areas. A caller may override its Material theme and color mode.
+safe areas. A caller may override its Material theme and color mode. The resolved
+Material mode also governs the document theme; prior document settings are restored
+when this behavior is disabled or the provider unmounts.
 
 ## Isolation and host responsibility
 
-Direct embedding uses an opaque-origin iframe, `allow-scripts allow-forms`,
-with a generated CSP before app content. Connection and nested-frame requests
-are denied unless resource metadata declares them. Sandbox overrides are
-explicit host decisions. `sandboxUrl` delegates policy enforcement to the
-host's separate-origin proxy; this package sends resource CSP and permissions
-to that proxy, but does not supply its server or authenticate its deployment.
+Browser embedding requires an HTTP(S) `sandboxUrl` on a different origin from
+the host, per the targeted stable protocol. Missing, same-origin, opaque and
+credential-bearing URLs fail before resource loading. The outer proxy uses
+`allow-scripts allow-same-origin allow-forms`; `sandbox` configures the inner
+view only. The host channel checks both source window and configured origin.
+The proxy must enforce resource CSP and permissions. The playground supplies
+a two-origin example with CSP response headers; production proxy deployment
+and trust remain the host's responsibility. Custom transports explicitly own
+embedding policy for native integrations/tests.
 Resource policy is a requested policy, not a host trust decision: hosts must
 validate allowed origins and privileges before accepting it.
 

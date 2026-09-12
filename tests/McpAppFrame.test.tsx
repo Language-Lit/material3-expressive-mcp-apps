@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Material3Provider } from '@language-lit/material3-expressive'
@@ -44,6 +45,7 @@ async function mountFrame(
   const view = render(renderFrame())
 
   const app = new App({ name: 'test-app', version: '1.2.3' }, appCapabilities, { autoResize: false })
+  app.onteardown = async () => ({})
   const toolInputs: McpUiToolInputNotification['params'][] = []
   app.addEventListener('toolinput', (params) => toolInputs.push(params))
   const toolResults: unknown[] = []
@@ -210,6 +212,37 @@ describe('McpAppFrame', () => {
     expect(screen.getByRole('button', { name: 'Enter full screen' })).toBeTruthy()
   })
 
+  it('reports inline when a controlled owner refuses an app fullscreen request', async () => {
+    const onDisplayModeChange = vi.fn()
+    harness = await mountFrame({ displayMode: 'inline', availableDisplayModes: ['inline', 'fullscreen'], onDisplayModeChange })
+    let result: unknown
+    await act(async () => { result = await harness!.app.requestDisplayMode({ mode: 'fullscreen' }) })
+    expect(result).toEqual({ mode: 'inline' })
+    expect(root().dataset.displayMode).toBe('inline')
+    expect(harness.app.getHostContext()?.displayMode).toBe('inline')
+    expect(onDisplayModeChange).toHaveBeenCalledWith('fullscreen')
+  })
+
+  it('reports the committed mode when a controlled owner accepts the request', async () => {
+    const [hostTransport, appTransport] = InMemoryTransport.createLinkedPair()
+    function Controlled() {
+      const [mode, setMode] = useState<McpUiDisplayMode>('inline')
+      return <Material3Provider><McpAppFrame client={null} resource={{ uri: 'ui://controlled', html: '<p>App</p>' }}
+        transport={() => hostTransport} displayMode={mode} availableDisplayModes={['inline', 'fullscreen']}
+        onDisplayModeChange={setMode} /></Material3Provider>
+    }
+    render(<Controlled />)
+    const app = new App({ name: 'controlled', version: '1' }, {}, { autoResize: false })
+    app.onteardown = async () => ({})
+    try {
+      await act(async () => { await app.connect(appTransport) })
+      let result: unknown
+      await act(async () => { result = await app.requestDisplayMode({ mode: 'fullscreen' }) })
+      expect(result).toEqual({ mode: 'fullscreen' })
+      expect(root().dataset.displayMode).toBe('fullscreen')
+    } finally { cleanup(); await app.close() }
+  })
+
   it('respects a controlled display mode', async () => {
     const onDisplayModeChange = vi.fn()
     harness = await mountFrame({
@@ -273,6 +306,110 @@ describe('McpAppFrame', () => {
     expect(onTeardownRequest).toHaveBeenCalled()
     expect(iframe().hidden).toBe(true)
     expect(screen.getByRole('status').textContent).toContain('The app has closed.')
+  })
+
+  it('waits for acknowledgement and rejects new work while closing', async () => {
+    const onMessage = vi.fn()
+    const onBridge = vi.fn()
+    const onTeardownRequest = vi.fn()
+    harness = await mountFrame({ onMessage, onBridge, onTeardownRequest })
+    let acknowledge!: () => void
+    harness.app.onteardown = () => new Promise((resolve) => { acknowledge = () => resolve({}) })
+    const documentBefore = iframe().srcdoc
+    await act(async () => { await harness!.app.requestTeardown() })
+    await waitFor(() => expect(root().dataset.status).toBe('closing'))
+    expect(iframe().srcdoc).toBe(documentBefore)
+    expect(onTeardownRequest).not.toHaveBeenCalled()
+    await expect(harness.app.callServerTool({ name: 'greet', arguments: { name: 'Blocked' } })).rejects.toThrow(/closing/)
+    await expect(harness.app.sendMessage({ role: 'user', content: [{ type: 'text', text: 'Blocked' }] })).rejects.toThrow(/closing/)
+    expect(onMessage).not.toHaveBeenCalled()
+    await act(async () => { acknowledge() })
+    await waitFor(() => expect(root().dataset.status).toBe('closed'))
+    expect(iframe().srcdoc).toBe('')
+    expect(onBridge).toHaveBeenLastCalledWith(null)
+    expect(onTeardownRequest).toHaveBeenCalledTimes(1)
+    await expect(harness.app.callServerTool({ name: 'greet', arguments: { name: 'Blocked' } })).rejects.toThrow()
+  })
+
+  it('supports graceful host closure through active=false', async () => {
+    harness = await mountFrame()
+    let acknowledge!: () => void
+    const teardown = vi.fn(() => new Promise<Record<string, never>>((resolve) => { acknowledge = () => resolve({}) }))
+    harness.app.onteardown = teardown
+    harness.rerender({ active: false })
+    await waitFor(() => expect(teardown).toHaveBeenCalledTimes(1))
+    expect(root().dataset.status).toBe('closing')
+    expect(iframe().srcdoc).toContain('Test view')
+    await act(async () => { acknowledge() })
+    await waitFor(() => expect(root().dataset.status).toBe('closed'))
+    expect(iframe().srcdoc).toBe('')
+  })
+
+  it('bounds teardown when the app never acknowledges', async () => {
+    const onError = vi.fn()
+    harness = await mountFrame({ onError })
+    harness.app.onteardown = () => new Promise(() => {})
+    vi.useFakeTimers()
+    try {
+      await act(async () => { await harness!.app.requestTeardown() })
+      expect(root().dataset.status).toBe('closing')
+      await act(async () => { await vi.advanceTimersByTimeAsync(1001) })
+      expect(root().dataset.status).toBe('closed')
+      expect(iframe().srcdoc).toBe('')
+      expect(onError).toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+  })
+
+  it('sends teardown before React removes the iframe on immediate unmount', async () => {
+    const [hostTransport, appTransport] = InMemoryTransport.createLinkedPair()
+    const send = hostTransport.send.bind(hostTransport)
+    const teardownConnected: boolean[] = []
+    hostTransport.send = async (message, options) => {
+      if ('method' in message && message.method === 'ui/resource-teardown') teardownConnected.push(iframe().isConnected)
+      return send(message, options)
+    }
+    const view = render(<Material3Provider><McpAppFrame client={null} resource={{ uri: 'ui://unmount', html: '<p>Unmount</p>' }} transport={() => hostTransport} /></Material3Provider>)
+    const app = new App({ name: 'unmount', version: '1' }, {}, { autoResize: false })
+    const teardown = vi.fn(async () => ({}))
+    app.onteardown = teardown
+    try {
+      await act(async () => { await app.connect(appTransport) })
+      await act(async () => { view.unmount() })
+      expect(teardownConnected).toEqual([true])
+      expect(teardown).toHaveBeenCalledTimes(1)
+    } finally { await app.close() }
+  })
+
+  it('waits for the old resource teardown before connecting its replacement', async () => {
+    harness = await mountFrame()
+    const oldIframe = iframe()
+    let acknowledge!: () => void
+    harness.app.onteardown = () => new Promise((resolve) => { acknowledge = () => resolve({}) })
+    const [hostTransport, appTransport] = InMemoryTransport.createLinkedPair()
+    const replacementFactory = vi.fn(() => hostTransport)
+    harness.rerender({ resource: { uri: 'ui://replacement', html: '<p>Replacement</p>', meta: { prefersBorder: false } }, transport: replacementFactory })
+    await waitFor(() => expect(acknowledge).toBeTypeOf('function'))
+    expect(replacementFactory).not.toHaveBeenCalled()
+    expect(iframe().srcdoc).toContain('Test view')
+    await act(async () => { acknowledge() })
+    await waitFor(() => expect(replacementFactory).toHaveBeenCalledTimes(1))
+    const replacement = new App({ name: 'replacement', version: '1' }, {}, { autoResize: false })
+    replacement.onteardown = async () => ({})
+    try {
+      await act(async () => { await replacement.connect(appTransport) })
+      expect(iframe()).toBe(oldIframe)
+      expect(iframe().srcdoc).toContain('Replacement')
+      expect(root().dataset.status).toBe('ready')
+    } finally { cleanup(); await replacement.close() }
+  })
+
+  it.each([undefined, '/sandbox.html', 'data:text/html,x', 'javascript:void(0)'])('rejects browser embedding with invalid proxy %s', async (sandboxUrl) => {
+    const onError = vi.fn()
+    render(<Material3Provider><McpAppFrame client={null} resource={{ uri: 'ui://blocked', html: '<p>Must not load</p>' }} sandboxUrl={sandboxUrl} onError={onError} /></Material3Provider>)
+    await waitFor(() => expect(root().dataset.status).toBe('error'))
+    expect(onError).toHaveBeenCalled()
+    expect(iframe().srcdoc).toBe('')
+    expect(iframe().getAttribute('src')).toBeNull()
   })
 
   it('closes the bridge on unmount', async () => {

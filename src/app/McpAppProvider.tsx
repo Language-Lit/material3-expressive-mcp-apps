@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { Material3Provider } from '@language-lit/material3-expressive'
+import { Material3Provider, useResolvedColorMode } from '@language-lit/material3-expressive'
 import type { ColorMode, Material3Theme, ResolvedColorMode } from '@language-lit/material3-expressive/theme'
 import type { Implementation, Transport } from '@modelcontextprotocol/client'
 import {
@@ -44,7 +44,7 @@ export interface McpAppProviderProps {
    */
   readonly applyHostStyles?: boolean
   /**
-   * Mirrors the host theme onto `document.documentElement` as `data-theme`
+   * Mirrors the resolved Material color mode (including overrides) onto `document.documentElement` as `data-theme`
    * and `color-scheme`, so native controls and scrollbars match. Defaults to
    * `true`.
    */
@@ -148,7 +148,11 @@ export function McpAppProvider(props: McpAppProviderProps): ReactNode {
       }))
     })
     instance.onteardown = async () => {
-      if (!disposed) setStatus('closed')
+      if (!disposed) {
+        appRef.current = null
+        setApp(null)
+        setStatus('closed')
+      }
       return {}
     }
 
@@ -194,10 +198,6 @@ export function McpAppProvider(props: McpAppProviderProps): ReactNode {
   }, [applyHostStyles, fontCss])
 
   const hostTheme = hostContext?.theme
-  useEffect(() => {
-    if (!applyDocumentColorScheme || !hostTheme) return
-    applyDocumentTheme(hostTheme)
-  }, [applyDocumentColorScheme, hostTheme])
 
   const requestDisplayMode = useCallback(async (mode: McpUiDisplayMode): Promise<McpUiDisplayMode> => {
     const instance = appRef.current
@@ -241,6 +241,7 @@ export function McpAppProvider(props: McpAppProviderProps): ReactNode {
       systemModeFallback={systemModeFallback}
       className="m3e-mcp-app-theme"
     >
+      <DocumentColorScheme enabled={applyDocumentColorScheme} />
       <McpAppContext.Provider value={state}>
         <div
           ref={rootRef}
@@ -254,4 +255,24 @@ export function McpAppProvider(props: McpAppProviderProps): ReactNode {
       </McpAppContext.Provider>
     </Material3Provider>
   )
+}
+
+/** Read the public Material context so system mode and explicit overrides agree. */
+function DocumentColorScheme({ enabled }: { readonly enabled: boolean }): ReactNode {
+  const mode = useResolvedColorMode()
+  useEffect(() => {
+    if (!enabled) return
+    const root = document.documentElement
+    const previousTheme = root.getAttribute('data-theme')
+    const previousScheme = root.style.getPropertyValue('color-scheme')
+    const previousPriority = root.style.getPropertyPriority('color-scheme')
+    applyDocumentTheme(mode)
+    return () => {
+      if (previousTheme === null) root.removeAttribute('data-theme')
+      else root.setAttribute('data-theme', previousTheme)
+      if (previousScheme) root.style.setProperty('color-scheme', previousScheme, previousPriority)
+      else root.style.removeProperty('color-scheme')
+    }
+  }, [enabled, mode])
+  return null
 }

@@ -26,7 +26,6 @@ import type {
 } from '@modelcontextprotocol/client'
 import { AppBridge, buildAllowAttribute } from '@modelcontextprotocol/ext-apps/app-bridge'
 import {
-  PostMessageTransport,
   type McpUiAppCapabilities,
   type McpUiDisplayMode,
   type McpUiDownloadFileRequest,
@@ -37,6 +36,8 @@ import {
   type McpUiUpdateModelContextRequest,
 } from '@modelcontextprotocol/ext-apps'
 
+import { flushSync } from 'react-dom'
+import { gateTransport, proxyTransport, resolveSandboxUrl } from './connection'
 import { sandboxDocument } from './sandboxDocument'
 import { cx } from '../internal/classNames'
 import { FullscreenExitGlyph, FullscreenGlyph, PipExitGlyph, PipGlyph } from '../internal/icons'
@@ -51,7 +52,7 @@ import {
 import type { McpAppResource } from './resource'
 
 /** The frame's lifecycle, also exposed as `data-status` on its root. */
-export type McpAppFrameStatus = 'connecting' | 'ready' | 'closed' | 'error'
+export type McpAppFrameStatus = 'connecting' | 'ready' | 'closing' | 'closed' | 'error'
 
 export type McpAppPlatform = NonNullable<McpUiHostContext['platform']>
 export type McpAppToolInfo = NonNullable<McpUiHostContext['toolInfo']>
@@ -71,6 +72,8 @@ export interface McpAppFrameProps {
   readonly client: Client | null
   /** The UI resource to render; see `readMcpAppResource`. */
   readonly resource: McpAppResource
+  /** Set false to tear down gracefully; wait for closed before unmounting. Defaults to true. */
+  readonly active?: boolean
   /** The host identity announced to the app. Defaults to this package. */
   readonly hostInfo?: Implementation
   /** The tool call that produced the app, exposed to it as `toolInfo`. */
@@ -112,11 +115,11 @@ export interface McpAppFrameProps {
   readonly platform?: McpAppPlatform
   readonly safeAreaInsets?: McpAppSafeAreaInsets
   /**
-   * Loads the app through a sandbox proxy document at this URL instead of
-   * `srcdoc`. The proxy receives the HTML once it reports ready.
+   * Required for browser embedding: an HTTP(S) proxy on a different origin.
+   * The proxy receives the HTML once it reports ready. Custom transports own embedding.
    */
   readonly sandboxUrl?: string
-  /** Overrides the iframe `sandbox` attribute (or the inner sandbox under a proxy). */
+  /** Overrides the inner view sandbox; the outer proxy permissions are fixed. */
   readonly sandbox?: string
   /**
    * Supplies the transport to the app instead of a `PostMessageTransport` to
@@ -141,7 +144,7 @@ export interface McpAppFrameProps {
   readonly onLog?: (params: LoggingMessageNotificationParams) => void
   readonly onInitialized?: (info: McpAppInitializedInfo) => void
   readonly onSizeChange?: (size: { readonly width?: number; readonly height?: number }) => void
-  /** The app asked to be removed. The frame hides it; the host decides what to unmount. */
+  /** Called after app-requested teardown finishes and the frame disconnects; safe to unmount. */
   readonly onTeardownRequest?: () => void
   readonly onStatusChange?: (status: McpAppFrameStatus) => void
   readonly onError?: (error: Error) => void
@@ -275,6 +278,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
   const {
     client,
     resource,
+    active = true,
     hostInfo,
     toolInfo,
     toolInput,
@@ -318,6 +322,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
   const viewportRef = useRef<HTMLDivElement>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const bridgeRef = useRef<AppBridge | null>(null)
+  const pendingClose = useRef<Promise<void> | undefined>(undefined)
   const sentRef = useRef<{ input?: unknown; result?: unknown; cancelled?: unknown }>({})
 
   const [status, setStatusState] = useState<McpAppFrameStatus>('connecting')
@@ -451,164 +456,221 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
   // One bridge per resource. Everything the app can observe later flows
   // through `setHostContext`; everything it must know at initialization is
   // measured here, synchronously, before the document is loaded.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const iframe = iframeRef.current
     const root = rootRef.current
     const viewport = viewportRef.current
     if (!iframe || !root || !viewport) return
 
     let disposed = false
-    sentRef.current = {}
-    setError(null)
-    setAppHeight(undefined)
-    setStatus('connecting')
-
-    const fail = (cause: unknown) => {
+    let shutdown = (): Promise<void> => Promise.resolve()
+    const previousClose = pendingClose.current
+    const start = async () => {
+      if (previousClose) await previousClose
       if (disposed) return
-      const failure = toError(cause)
-      setError(failure)
-      setStatus('error')
-      latest.current.onError?.(failure)
-    }
+      if (!active) {
+        setStatus('closed')
+        return
+      }
+      sentRef.current = {}
+      setError(null)
+      setAppHeight(undefined)
+      setStatus('connecting')
 
-    if (client && !client.getServerCapabilities()) {
-      fail(new Error('McpAppFrame needs a connected client: call client.connect() before rendering the frame.'))
-      return
-    }
+      const fail = (cause: unknown) => {
+        if (disposed) return
+        const failure = toError(cause)
+        setError(failure)
+        setStatus('error')
+        latest.current.onError?.(failure)
+      }
 
-    const rect = viewport.getBoundingClientRect()
-    const initialContext = buildHostContext({
-      ...hostContextRef.current,
-      theme: hostContextRef.current.theme,
-      styles: styleVariables ?? readMaterialStyleVariables(root),
-      fonts,
-      displayMode: latest.current.mode,
-      availableDisplayModes: latest.current.availableDisplayModes,
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      maxHeight,
-      locale: resolvedLocale,
-      timeZone: resolvedTimeZone,
-      hostInfo: effectiveHostInfo,
-      platform,
-      deviceCapabilities,
-      safeAreaInsets,
-      toolInfo,
-    })
+      if (client && !client.getServerCapabilities()) {
+        fail(new Error('McpAppFrame needs a connected client: call client.connect() before rendering the frame.'))
+        return
+      }
 
-    const capabilities = buildHostCapabilities({
-      client,
-      resource,
-      downloadFile: hasDownloadFile,
-      message: hasMessage,
-      updateModelContext: hasUpdateModelContext,
-    })
+      let proxyUrl: string | undefined
+      try {
+        if (!latest.current.transport) proxyUrl = resolveSandboxUrl(sandboxUrl, window.location.href)
+        else if (sandboxUrl) proxyUrl = resolveSandboxUrl(sandboxUrl, window.location.href)
+      } catch (cause) {
+        fail(cause)
+        return
+      }
 
-    const bridge = new AppBridge(client, effectiveHostInfo, capabilities, { hostContext: initialContext })
-    bridgeRef.current = bridge
-
-    bridge.addEventListener('initialized', () => {
-      if (disposed) return
-      setStatus('ready')
-      latest.current.onInitialized?.({
-        appInfo: bridge.getAppVersion(),
-        appCapabilities: bridge.getAppCapabilities(),
+      const rect = viewport.getBoundingClientRect()
+      const initialContext = buildHostContext({
+        ...hostContextRef.current,
+        theme: hostContextRef.current.theme,
+        styles: styleVariables ?? readMaterialStyleVariables(root),
+        fonts,
+        displayMode: latest.current.mode,
+        availableDisplayModes: latest.current.availableDisplayModes,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        maxHeight,
+        locale: resolvedLocale,
+        timeZone: resolvedTimeZone,
+        hostInfo: effectiveHostInfo,
+        platform,
+        deviceCapabilities,
+        safeAreaInsets,
+        toolInfo,
       })
-    })
-    bridge.addEventListener('sizechange', (params) => {
-      if (disposed) return
-      if (typeof params.height === 'number' && Number.isFinite(params.height)) {
-        setAppHeight(Math.max(0, Math.ceil(params.height)))
-      }
-      latest.current.onSizeChange?.(params)
-    })
-    bridge.addEventListener('sandboxready', () => {
-      if (disposed) return
-      bridge
-        .sendSandboxResourceReady({
-          html: resource.html,
-          sandbox: sandbox ?? DEFAULT_SANDBOX,
-          ...(resource.meta?.csp ? { csp: resource.meta.csp } : {}),
-          ...(resource.meta?.permissions ? { permissions: resource.meta.permissions } : {}),
+
+      const capabilities = buildHostCapabilities({
+        client,
+        resource,
+        downloadFile: hasDownloadFile,
+        message: hasMessage,
+        updateModelContext: hasUpdateModelContext,
+      })
+
+      const bridge = new AppBridge(client, effectiveHostInfo, capabilities, { hostContext: initialContext })
+      bridgeRef.current = bridge
+      let initialized = false
+      let closing = false
+      let gated: ReturnType<typeof gateTransport> | undefined
+      let closePromise: Promise<void> | undefined
+      shutdown = () => {
+        if (closePromise) return closePromise
+        closing = true
+        gated?.stopRequests()
+        if (bridgeRef.current === bridge) {
+          bridgeRef.current = null
+        }
+        const teardown = initialized
+          ? bridge.teardownResource({}, { timeout: 1000 })
+          : Promise.resolve()
+        closePromise = teardown.catch((cause) => {
+          if (!disposed) latest.current.onError?.(toError(cause))
+        }).then(async () => {
+          await bridge.close().catch(() => {})
+          iframe.removeAttribute('srcdoc')
+          iframe.removeAttribute('src')
         })
-        .catch(fail)
-    })
-    bridge.addEventListener('requestteardown', () => {
-      if (disposed) return
-      setStatus('closed')
-      latest.current.onTeardownRequest?.()
-    })
-    bridge.addEventListener('loggingmessage', (params) => {
-      if (disposed) return
-      latest.current.onLog?.(params)
-    })
-
-    bridge.onrequestdisplaymode = async ({ mode: requested }) => {
-      if (latest.current.availableDisplayModes.includes(requested)) {
-        changeModeRef.current(requested)
-        return { mode: requested }
+        latest.current.onBridge?.(null)
+        return closePromise
       }
-      return { mode: latest.current.mode }
-    }
-    bridge.onopenlink = async ({ url }) => {
-      const handler = latest.current.onOpenLink
-      const outcome = handler ? await handler(url) : openLinkByDefault(url)
-      return outcome === false ? { isError: true } : {}
-    }
-    if (hasDownloadFile) {
-      bridge.ondownloadfile = async (params) => {
-        const outcome = await latest.current.onDownloadFile?.(params)
+
+      bridge.addEventListener('initialized', () => {
+        if (disposed || closing) return
+        initialized = true
+        setStatus('ready')
+        latest.current.onInitialized?.({
+          appInfo: bridge.getAppVersion(),
+          appCapabilities: bridge.getAppCapabilities(),
+        })
+      })
+      bridge.addEventListener('sizechange', (params) => {
+        if (disposed) return
+        if (typeof params.height === 'number' && Number.isFinite(params.height)) {
+          setAppHeight(Math.max(0, Math.ceil(params.height)))
+        }
+        latest.current.onSizeChange?.(params)
+      })
+      bridge.addEventListener('sandboxready', () => {
+        if (disposed) return
+        bridge
+          .sendSandboxResourceReady({
+            html: resource.html,
+            sandbox: sandbox ?? DEFAULT_SANDBOX,
+            ...(resource.meta?.csp ? { csp: resource.meta.csp } : {}),
+            ...(resource.meta?.permissions ? { permissions: resource.meta.permissions } : {}),
+          })
+          .catch(fail)
+      })
+      bridge.addEventListener('requestteardown', () => {
+        if (disposed || closing) return
+        setStatus('closing')
+        void shutdown().then(() => {
+          if (disposed) return
+          setStatus('closed')
+          latest.current.onTeardownRequest?.()
+        })
+      })
+      bridge.addEventListener('loggingmessage', (params) => {
+        if (disposed) return
+        latest.current.onLog?.(params)
+      })
+
+      bridge.onrequestdisplaymode = async ({ mode: requested }) => {
+        if (latest.current.availableDisplayModes.includes(requested)) {
+          // The parent may refuse or defer a controlled transition. Reply only
+          // after synchronous React updates commit, using the actual mode.
+          flushSync(() => changeModeRef.current(requested))
+        }
+        return { mode: latest.current.mode }
+      }
+      bridge.onopenlink = async ({ url }) => {
+        const handler = latest.current.onOpenLink
+        const outcome = handler ? await handler(url) : openLinkByDefault(url)
         return outcome === false ? { isError: true } : {}
       }
-    }
-    if (hasMessage) {
-      bridge.onmessage = async (params) => {
-        const outcome = await latest.current.onMessage?.(params)
-        return outcome === false ? { isError: true } : {}
+      if (hasDownloadFile) {
+        bridge.ondownloadfile = async (params) => {
+          const outcome = await latest.current.onDownloadFile?.(params)
+          return outcome === false ? { isError: true } : {}
+        }
       }
-    }
-    if (hasUpdateModelContext) {
-      bridge.onupdatemodelcontext = async (params) => {
-        await latest.current.onUpdateModelContext?.(params)
-        return {}
+      if (hasMessage) {
+        bridge.onmessage = async (params) => {
+          const outcome = await latest.current.onMessage?.(params)
+          return outcome === false ? { isError: true } : {}
+        }
       }
-    }
-
-    let link: Transport
-    try {
-      const createTransport = latest.current.transport
-      if (createTransport) {
-        link = createTransport(iframe)
-      } else {
-        const target = iframe.contentWindow
-        if (!target) throw new Error('The frame has no window to talk to.')
-        link = new PostMessageTransport(target, target)
+      if (hasUpdateModelContext) {
+        bridge.onupdatemodelcontext = async (params) => {
+          await latest.current.onUpdateModelContext?.(params)
+          return {}
+        }
       }
-    } catch (cause) {
-      fail(cause)
-      return
+
+      let link: Transport
+      try {
+        const createTransport = latest.current.transport
+        if (createTransport) {
+          link = createTransport(iframe)
+        } else {
+          const target = iframe.contentWindow
+          if (!target) throw new Error('The frame has no window to talk to.')
+          link = proxyTransport(target, new URL(proxyUrl!).origin)
+        }
+      } catch (cause) {
+        fail(cause)
+        await shutdown()
+        return
+      }
+
+      gated = gateTransport(link)
+      bridge.connect(gated.transport).then(() => {
+        if (disposed || closing) return
+        if (proxyUrl) iframe.src = proxyUrl
+        else iframe.srcdoc = sandboxDocument(resource.html, resource.meta?.csp)
+      }).catch((cause) => { fail(cause); void shutdown() })
+      latest.current.onBridge?.(bridge)
     }
-
-    bridge.connect(link).then(() => {
-      if (disposed) return
-      if (sandboxUrl) iframe.src = sandboxUrl
-      else iframe.srcdoc = sandboxDocument(resource.html, resource.meta?.csp)
-    }).catch(fail)
-    latest.current.onBridge?.(bridge)
-
+    if (!active) setStatus('closing')
+    void start().catch((cause) => {
+      if (!disposed) {
+        setError(toError(cause))
+        setStatus('error')
+        latest.current.onError?.(toError(cause))
+      }
+    })
     return () => {
+      // Layout cleanup sends the request before React removes iframe DOM.
       disposed = true
-      bridgeRef.current = null
-      latest.current.onBridge?.(null)
-      bridge.close().catch(() => {})
-      iframe.removeAttribute('srcdoc')
-      iframe.removeAttribute('src')
+      const closing = shutdown()
+      pendingClose.current = previousClose ? Promise.all([previousClose, closing]).then(() => {}) : closing
     }
     // Callback presence is part of the advertised capabilities, so toggling
     // one re-creates the bridge; callback identity does not, and neither does
     // the transport factory, which is read once when the bridge is created.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    active,
     client,
     resource.uri,
     resource.html,
@@ -708,7 +770,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
           ref={iframeRef}
           className="m3e-mcp-frame__iframe"
           title={frameTitle}
-          sandbox={sandbox ?? (sandboxUrl ? PROXY_SANDBOX : DEFAULT_SANDBOX)}
+          sandbox={sandboxUrl ? PROXY_SANDBOX : (sandbox ?? DEFAULT_SANDBOX)}
           allow={allow || undefined}
           hidden={status === 'closed' || status === 'error'}
         />
@@ -748,21 +810,16 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
       data-display-mode={mode}
       onKeyDown={onKeyDown}
     >
-      {bordered ? (
-        <Surface
-          as="section"
-          color="surface-container-low"
-          shape={mode === 'fullscreen' ? 'none' : 'large'}
-          className="m3e-mcp-frame__surface"
-          aria-label={frameTitle}
-        >
-          {content}
-        </Surface>
-      ) : (
-        <section className="m3e-mcp-frame__surface" aria-label={frameTitle}>
-          {content}
-        </section>
-      )}
+      <Surface
+        as="section"
+        color="surface-container-low"
+        shape={mode === 'fullscreen' ? 'none' : 'large'}
+        className="m3e-mcp-frame__surface"
+        style={bordered ? undefined : { backgroundColor: 'transparent' }}
+        aria-label={frameTitle}
+      >
+        {content}
+      </Surface>
     </div>
   )
 }
