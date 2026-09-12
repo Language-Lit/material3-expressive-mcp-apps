@@ -1,7 +1,7 @@
 # Material 3 Expressive for MCP Apps
 
 A React host frame for MCP Apps, plus a Material provider for the apps that
-run inside it. Version 0.1.0 provides the host and app integration described below.
+run inside it. Version 0.2.0 provides the host and app integration described below.
 
 The host renders `ui://` HTML resources in an isolated iframe, passes tool
 results, supplies Material-derived host styles, and supports inline, fullscreen
@@ -25,7 +25,7 @@ message to the host. This is deterministic sample data with no model/backend.
 ## Installation
 
 ```sh
-npm install @language-lit/material3-expressive-mcp-apps@0.1.0 @language-lit/material3-expressive @modelcontextprotocol/client@^2.0.0 @modelcontextprotocol/ext-apps@^2.0.0 react react-dom
+npm install @language-lit/material3-expressive-mcp-apps@0.2.0 @language-lit/material3-expressive @modelcontextprotocol/client@^2.0.0 @modelcontextprotocol/ext-apps@^2.0.0 react react-dom
 ```
 
 Load `@language-lit/material3-expressive/styles.css`, then this package's
@@ -48,7 +48,24 @@ export function ToolView({ client, uri, sandboxUrl }: { client: Client; uri: str
 Connect the client before rendering; advertise `mcpAppsClientCapabilities` when
 constructing it. Pass `toolInput`, `toolResult` and `toolInfo` for the tool call.
 Use `onMessage`, `onUpdateModelContext`, and `onDownloadFile` to explicitly
-enable those capabilities. `onBridge` exposes the SDK bridge for advanced use.
+enable those capabilities. App-originated server tool calls are denied unless
+`onAuthorizeToolCall` explicitly returns `true`. Use that callback to check the
+current user's permissions and await any required approval; enforce the same
+rules on the MCP server. The playground allows only its read-only refresh tool:
+
+```tsx
+<McpAppFrame
+  client={client}
+  resource={resource}
+  sandboxUrl={sandboxUrl}
+  onAuthorizeToolCall={({ name }) => name === 'refresh_forecast'}
+/>
+```
+
+Replace that example whitelist with your application's session/role policy.
+A missing callback advertises no server tools and also denies direct protocol
+requests. A late approval after closing cannot execute a tool.
+`onBridge` exposes the SDK bridge for advanced use.
 
 ```tsx
 import { McpAppProvider, useToolCall } from '@language-lit/material3-expressive-mcp-apps/app'
@@ -82,7 +99,10 @@ This is a migration from 0.1.0's direct `srcdoc` default. Custom `transport`
 implementations are an explicit escape hatch for native hosts and tests; those
 hosts own their embedding policy. See [the local proxy fixture](playground/proxy-server.ts)
 and [its relay](playground/proxy.ts) for a working example. Production deployments
-must configure their trusted host origins and resource policy.
+must configure their trusted host origins and resource policy. A standalone
+Docker service with signed launch tickets is provided under
+[deploy/sandbox](deploy/sandbox/README.md); its signing secret stays on the host
+backend. Tickets limit requested network origins and browser permissions.
 
 Do not grant same-origin access to untrusted HTML on the host's own origin.
 
@@ -106,7 +126,9 @@ also controls the document theme and native controls, including system mode.
 See [the specification](docs/SPEC.md) for mappings and the supported boundary.
 
 Compatibility is tested against ext-apps/client 2.0.0 and core 1.2.2.
-External host interoperability is not yet certified. Protocol documentation:
+See [the compatibility record](docs/COMPATIBILITY.md) for React and browser
+versions. Independent plain-JSON host/app peers are tested as well; this is not
+certification in a named third-party host. Protocol documentation:
 [official MCP Apps SDK](https://apps.extensions.modelcontextprotocol.io/api/).
 
 ## Verification
@@ -114,7 +136,11 @@ External host interoperability is not yet certified. Protocol documentation:
 ```sh
 npm run verify
 npm run playground:build
-M3E_CHROMIUM_PATH=/path/to/chromium npm run test:browser
+npx playwright-core install chromium firefox webkit
+npm run test:browser
+M3E_BROWSER=firefox npm run test:browser
+M3E_BROWSER=webkit npm run test:browser
+npm run test:react18
 ```
 
 The browser audit serves the production playground and a separate-origin proxy,
@@ -123,3 +149,18 @@ checks host and app layouts at 320, 390 and 1440px in light and dark mode, and
 verifies that the browser blocks an undeclared connection through CSP. It saves
 screenshots to a temporary directory. Tests use a real SDK connection and a
 local server; no credentials, LLM or external backend are needed.
+
+Firefox reports even caught CSP eval probes. The playground initializes Zod's
+public `jitless` setting in a side-effectful module before importing SDK schemas;
+it never adds `unsafe-eval`. If building your own strict-CSP app, preserve that
+initialization order and module side effects (see `playground/csp-runtime.ts`).
+Zod remains an SDK peer/development fixture, not a companion runtime dependency.
+
+## Migration from 0.1.0
+
+- Supply a separate-origin `sandboxUrl` for browser embedding.
+- Supply `onAuthorizeToolCall` to permit app-originated server tools.
+- Handle `closing` if you exhaustively match frame statuses. For graceful host
+  removal, use `active=false`, wait for `closed`, then unmount.
+- Controlled display-mode responses now reflect the mode actually committed.
+- App color-mode overrides now apply consistently to the document as well.

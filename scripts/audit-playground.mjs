@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { readFile, stat, mkdtemp } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { issueSandboxTicket, verifySandboxTicket } from '../playground/generated/proxy-ticket.mjs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createSandboxServer } from '../playground/generated/proxy-server.mjs'
-import { chromium } from 'playwright-core'
+import { chromium, firefox, webkit } from 'playwright-core'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const output = path.join(root, 'playground/dist')
-const executablePath = process.env.M3E_CHROMIUM_PATH
-assert(executablePath, 'Set M3E_CHROMIUM_PATH to a Chromium executable.')
+const engine = process.env.M3E_BROWSER ?? 'chromium'
+const browserType = { chromium, firefox, webkit }[engine]
+assert(browserType, 'M3E_BROWSER must be chromium, firefox or webkit.')
+const executablePath = engine === 'chromium' ? process.env.M3E_CHROMIUM_PATH : undefined
 await stat(path.join(output, 'index.html'))
 const screenshots = await mkdtemp(path.join(tmpdir(), 'm3e-mcp-apps-'))
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.xml': 'application/xml', '.txt': 'text/plain' }
@@ -28,10 +32,17 @@ const server = createServer(async (request, response) => {
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const origin = `http://127.0.0.1:${server.address().port}`
-const proxy = createSandboxServer(await readFile(path.join(root, 'playground/generated/proxy.html'), 'utf8'), [origin])
+const ticketSecret = randomBytes(32).toString('hex')
+const ticket = issueSandboxTicket({ hostOrigin: origin, expiresAt: Date.now() + 5 * 60_000 }, ticketSecret)
+const proxy = createSandboxServer(await readFile(path.join(root, 'playground/generated/proxy.html'), 'utf8'), [origin], {
+  authorize(request) {
+    const token = request.method === 'GET' ? new URL(request.url, origin).searchParams.get('ticket') : request.headers.authorization?.replace(/^Bearer /, '')
+    return token ? verifySandboxTicket(token, ticketSecret) : undefined
+  },
+})
 await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve))
 const proxyOrigin = `http://127.0.0.1:${proxy.address().port}`
-const browser = await chromium.launch({ executablePath })
+const browser = await browserType.launch({ ...(executablePath ? { executablePath } : {}) })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: 'light' })
 const page = await context.newPage()
 const errors = []
@@ -45,7 +56,7 @@ page.on('console', (message) => {
 })
 const app = () => page.frameLocator('iframe').frameLocator('iframe')
 try {
-  await page.goto(`${origin}/?sandboxUrl=${encodeURIComponent(`${proxyOrigin}/sandbox.html`)}`, { waitUntil: 'networkidle' })
+  await page.goto(`${origin}/?sandboxUrl=${encodeURIComponent(`${proxyOrigin}/sandbox.html?ticket=${ticket}`)}`, { waitUntil: 'networkidle' })
   await page.locator('[data-status="ready"]').waitFor()
   await context.setOffline(true)
   await page.getByRole('button', { name: 'Call get_forecast', exact: true }).click()
@@ -107,8 +118,8 @@ try {
   await page.locator('.m3e-mcp-frame[data-status="ready"]').waitFor()
   await app().getByRole('heading', { name: 'Lisbon', exact: true }).waitFor()
   await app().getByRole('button', { name: 'Refresh', exact: true }).click()
-  assert.deepEqual(errors.filter((error) => !error.includes('Content Security Policy') && !error.includes('content security policy')), [], 'Unexpected browser errors')
-  process.stdout.write(`Companion browser audit passed. Screenshots: ${screenshots}\n`)
+  assert.deepEqual(errors.filter((error) => !(error.includes('https://example.invalid/policy-probe') && /content[- ]security[- ]policy/i.test(error))), [], 'Unexpected browser errors')
+  process.stdout.write(`Companion ${engine} ${browser.version()} audit passed. Screenshots: ${screenshots}\n`)
 } catch (error) {
   console.error('Browser errors:', errors)
   console.error(await page.locator('body').innerText())

@@ -1,5 +1,54 @@
 # Active task
 
+## T04 — Compatibility, release and deployment readiness
+
+Status: complete for compatibility, release and local deployment readiness;
+production deployment awaiting owner configuration
+Approved: 2026-09-12 (owner instructed continuing the remaining work)
+
+### Scope
+
+Run and automate React 18/19 and Chromium/Firefox/WebKit verification; fix issues
+found. Prepare and publish 0.2.0 with the prior audited fixes and migration notes.
+Provide concrete deployment setup for the sandbox proxy and host authorization
+integration where configuration is available. Production host/domain and access
+rules are requested from the owner; do not invent credentials or deploy to an
+unspecified service. No Git commit or push, no private-consumer inspection, and
+no runtime dependency or public export-path changes.
+
+### Acceptance
+
+- Required verification and production build pass.
+- Repeatable compatibility matrix and recorded versions/results.
+- Inspect and test the packed release, publish that tarball, and verify registry
+  integrity plus a clean consumer install.
+- Test deployment artifacts locally; report any remaining external configuration.
+
+### Verification and release evidence
+
+- `npm run verify` passed: 69 tests in 9 files, types, distributable build and
+  package contract checks. `npm run playground:build` passed.
+- React 18.3.1 and 19.3.0 passed production browser checks in Chromium, Firefox
+  and WebKit. Versions, limitations and repeatable commands are recorded in
+  `docs/COMPATIBILITY.md`. Independent JSON-RPC peers exercise interoperability;
+  this is not certification in a named external host.
+- Tool calls require explicit host authorization and deny by default. The
+  standalone sandbox service verifies signed grants, enforces granted CSP and
+  permissions, and serves one-use resources. Docker build and real container
+  smoke checks passed. Deployment instructions are in `deploy/sandbox/README.md`.
+- Published `@language-lit/material3-expressive-mcp-apps@0.2.0` with public access
+  after npm browser authentication. Registry `latest` is 0.2.0. The downloaded
+  tarball is byte-identical to the inspected and tested 13-file, 52,585-byte
+  artifact; SHA-1 `55f534d793d21255197a9e5f35a0407425de915c`.
+- Fresh registry installs and clean `npm ci` passed with strict peers for both
+  React versions. Host/app imports, CSS resolution and public types passed.
+- Production deployment and login integration still require the owner's host
+  URL, hosting platform, login provider and access rules. No external deployment,
+  Git commit or push was performed. Fullscreen remains a documented non-modal
+  CSS display mode; custom palettes require sharing the Material theme.
+
+---
+
 ## T03 — Fix audit findings
 
 Status: complete

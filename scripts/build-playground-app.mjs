@@ -29,3 +29,8 @@ await build({
   outfile: 'playground/generated/proxy-server.mjs', bundle: true, platform: 'node', format: 'esm',
 })
 console.log('Built the sandbox proxy fixture.')
+
+await build({
+  absWorkingDir: root, entryPoints: ['deploy/sandbox/ticket.ts'],
+  outfile: 'playground/generated/proxy-ticket.mjs', bundle: true, platform: 'node', format: 'esm',
+})

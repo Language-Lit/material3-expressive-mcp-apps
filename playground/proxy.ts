@@ -1,3 +1,4 @@
+import './csp-runtime'
 import { buildAllowAttribute } from '@modelcontextprotocol/ext-apps/app-bridge'
 import type { McpUiSandboxResourceReadyNotification } from '@modelcontextprotocol/ext-apps'
 
@@ -27,7 +28,10 @@ async function load(params: McpUiSandboxResourceReadyNotification['params']) {
   view.setAttribute('sandbox', params.sandbox ?? 'allow-scripts allow-forms')
   view.allow = buildAllowAttribute(params.permissions)
   const response = await fetch('/views', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params),
+    method: 'POST', headers: {
+      'Content-Type': 'application/json',
+      ...(new URL(location.href).searchParams.get('ticket') ? { Authorization: `Bearer ${new URL(location.href).searchParams.get('ticket')}` } : {}),
+    }, body: JSON.stringify(params),
   })
   if (!response.ok) throw new Error('The sandbox proxy refused the view.')
   const { path } = await response.json() as { path: string }

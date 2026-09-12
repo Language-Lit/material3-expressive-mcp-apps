@@ -1,6 +1,6 @@
 {
   "name": "@language-lit/material3-expressive-mcp-apps",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP Apps for Material 3 Expressive: a Material host frame that embeds MCP Apps in agent surfaces, and an app provider that lets an MCP App built with the design system follow the host's theme, display mode and safe areas.",
   "license": "MIT",
   "homepage": "https://m3e.language-lit.com/mcp-apps/",
@@ -47,7 +47,10 @@
     "preplayground": "node scripts/build-playground-app.mjs",
     "preplayground:build": "node scripts/build-playground-app.mjs",
     "pretypecheck": "node scripts/build-playground-app.mjs",
-    "test:browser": "node scripts/audit-playground.mjs"
+    "test:browser": "node scripts/audit-playground.mjs",
+    "sandbox:build": "node scripts/build-playground-app.mjs && node scripts/build-sandbox.mjs",
+    "test:react18": "node scripts/verify-react.mjs 18.3.1",
+    "test:sandbox": "node scripts/test-sandbox-container.mjs"
   },
   "peerDependencies": {
     "@language-lit/material3-expressive": "^1.2.0",

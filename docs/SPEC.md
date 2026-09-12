@@ -1,7 +1,7 @@
 # MCP Apps companion specification
 
-Status: 0.1.0 published to npm on 2026-09-12
-Task: T03, approved 2026-09-12 (unpublished audit fixes)
+Status: 0.2.0 published; production deployment configuration pending
+Task: T04, approved 2026-09-12
 
 ## Product
 
@@ -56,14 +56,21 @@ credential-bearing URLs fail before resource loading. The outer proxy uses
 `allow-scripts allow-same-origin allow-forms`; `sandbox` configures the inner
 view only. The host channel checks both source window and configured origin.
 The proxy must enforce resource CSP and permissions. The playground supplies
-a two-origin example with CSP response headers; production proxy deployment
-and trust remain the host's responsibility. Custom transports explicitly own
+a two-origin example with CSP response headers. A separately built service under
+`deploy/sandbox` requires signed, expiring host tickets, limits resource policy
+to the ticket's grants and forces the view sandbox in a response header. It
+requires configured host/public origins and a server-side secret; production
+deployment and integration with user sessions remain application inputs. Custom transports explicitly own
 embedding policy for native integrations/tests.
 Resource policy is a requested policy, not a host trust decision: hosts must
 validate allowed origins and privileges before accepting it.
 
-AppBridge proxies calls through the supplied connected client; authentication,
-tool authorization and confirmation belong to the host. Message/model-context
+AppBridge routes calls through the supplied connected client. The frame denies
+app-originated tool execution unless `onAuthorizeToolCall` explicitly returns
+true. Only hosts providing that callback advertise serverTools. The callback
+can await host permission/approval checks; closing or cancellation invalidates
+pending approval. The application's backend still authenticates users and
+enforces tool/resource authorization for all clients. Message/model-context
 and download capabilities are advertised only with handlers. The default link
 handler accepts only HTTP(S). An app can send messages through an explicitly
 provided callback; the library does not execute an agent or send user messages

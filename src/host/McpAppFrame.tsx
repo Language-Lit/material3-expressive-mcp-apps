@@ -19,6 +19,7 @@ import {
 } from '@language-lit/material3-expressive'
 import type {
   CallToolResult,
+  CallToolRequest,
   Client,
   Implementation,
   LoggingMessageNotificationParams,
@@ -128,9 +129,12 @@ export interface McpAppFrameProps {
    */
   readonly transport?: (iframe: HTMLIFrameElement) => Transport
   /**
-   * Handles `ui/open-link`. Return `false` to refuse. Without a handler the
-   * frame opens `http` and `https` URLs in a new tab with `noopener`.
+   * Authorizes each app-originated server tool call. Return true only after
+   * checking the current user's permissions and any required approval.
+   * Missing handlers and all other results deny the call.
    */
+  readonly onAuthorizeToolCall?: (params: CallToolRequest['params']) => boolean | Promise<boolean>
+  /** Handles ui/open-link; defaults to opening HTTP(S) in a new tab with noopener. */
   readonly onOpenLink?: (url: string) => boolean | void | Promise<boolean | void>
   /** Handles `ui/download-file`. Advertised only when provided. Return `false` to refuse. */
   readonly onDownloadFile?: (
@@ -238,6 +242,7 @@ export function buildHostContext(input: HostContextInput): McpUiHostContext {
 interface HostCapabilitiesInput {
   readonly client: Client | null
   readonly resource: McpAppResource
+  readonly serverTools?: boolean
   readonly downloadFile: boolean
   readonly message: boolean
   readonly updateModelContext: boolean
@@ -248,7 +253,7 @@ export function buildHostCapabilities(input: HostCapabilitiesInput): McpUiHostCa
   const server = input.client?.getServerCapabilities()
   const capabilities: McpUiHostCapabilities = { openLinks: {}, logging: {} }
   if (input.downloadFile) capabilities.downloadFile = {}
-  if (server?.tools) capabilities.serverTools = { listChanged: Boolean(server.tools.listChanged) }
+  if (server?.tools && input.serverTools) capabilities.serverTools = { listChanged: Boolean(server.tools.listChanged) }
   if (server?.resources) capabilities.serverResources = { listChanged: Boolean(server.resources.listChanged) }
   if (input.message) capabilities.message = { ...ALL_CONTENT_MODALITIES }
   if (input.updateModelContext) {
@@ -300,6 +305,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
     sandboxUrl,
     sandbox,
     transport,
+    onAuthorizeToolCall,
     onOpenLink,
     onDownloadFile,
     onMessage,
@@ -348,6 +354,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
     availableDisplayModes,
     transport,
     onDisplayModeChange,
+    onAuthorizeToolCall,
     onOpenLink,
     onDownloadFile,
     onMessage,
@@ -449,6 +456,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
   const hostContextRef = useLatest(hostContext)
 
   const metaKey = JSON.stringify(resource.meta ?? null)
+  const hasToolAuthorization = Boolean(onAuthorizeToolCall)
   const hasDownloadFile = Boolean(onDownloadFile)
   const hasMessage = Boolean(onMessage)
   const hasUpdateModelContext = Boolean(onUpdateModelContext)
@@ -522,6 +530,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
       const capabilities = buildHostCapabilities({
         client,
         resource,
+        serverTools: hasToolAuthorization,
         downloadFile: hasDownloadFile,
         message: hasMessage,
         updateModelContext: hasUpdateModelContext,
@@ -649,6 +658,16 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
         if (proxyUrl) iframe.src = proxyUrl
         else iframe.srcdoc = sandboxDocument(resource.html, resource.meta?.csp)
       }).catch((cause) => { fail(cause); void shutdown() })
+      // AppBridge installs its client proxy synchronously during connect.
+      // Replace only tool execution; preserve the SDK's validation/routing.
+      bridge.oncalltool = async (params, extra) => {
+        const signal = extra.mcpReq.signal
+        const approved = await latest.current.onAuthorizeToolCall?.(params)
+        if (!client || approved !== true || closing || disposed || signal.aborted) {
+          return { isError: true, content: [{ type: 'text', text: 'Tool call was not authorized.' }] }
+        }
+        return client.request({ method: 'tools/call', params }, { signal })
+      }
       latest.current.onBridge?.(bridge)
     }
     if (!active) setStatus('closing')
@@ -678,6 +697,7 @@ export function McpAppFrame(props: McpAppFrameProps): ReactNode {
     sandboxUrl,
     sandbox,
     effectiveHostInfo,
+    hasToolAuthorization,
     hasDownloadFile,
     hasMessage,
     hasUpdateModelContext,

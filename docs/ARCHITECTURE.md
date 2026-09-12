@@ -31,3 +31,16 @@ the host separately. Both dev and production use the same isolated app.
 The relay accepts host messages only from the configured parent origin/window
 and view messages only from its inner iframe. The server serves each view once
 with a CSP response header. Build scripts generate both proxy assets.
+
+`deploy/sandbox/` owns the standalone service entry, Node-only ticket helper,
+Dockerfile and deployment guide. `scripts/build-sandbox.mjs` generates its
+unpublished `dist/` independently from the browser package. `tests/` exercises
+signed tickets, policy limits and independently implemented JSON-RPC peers;
+`scripts/test-sandbox-container.mjs` runs the built image against local requests.
+`McpAppFrame` installs an explicit tool-authorization gate after AppBridge's
+standard client handlers are registered; absent approval never executes a tool.
+
+The browser runner selects Chromium/Firefox/WebKit via M3E_BROWSER.
+`scripts/verify-react.mjs` copies this repository into a temporary directory,
+installs the requested React major and types with strict peer resolution, then
+runs types, tests, builds and all three engines without changing the workspace.

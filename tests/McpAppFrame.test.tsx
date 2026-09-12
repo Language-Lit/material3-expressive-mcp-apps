@@ -36,6 +36,7 @@ async function mountFrame(
           client={connection.client}
           resource={resource}
           transport={transport}
+          onAuthorizeToolCall={() => true}
           {...frameProps}
           {...rest}
         />
@@ -114,7 +115,7 @@ describe('McpAppFrame', () => {
     expect(context.locale).toBe('pt-BR')
     expect(context.timeZone).toBe('America/Sao_Paulo')
     expect(context.platform).toBe('web')
-    expect(context.userAgent).toBe('@language-lit/material3-expressive-mcp-apps/0.1.0')
+    expect(context.userAgent).toBe('@language-lit/material3-expressive-mcp-apps/0.2.0')
     expect(context.toolInfo).toEqual({ id: 7, tool: expect.objectContaining({ name: 'greet' }) })
     expect(context.containerDimensions).toEqual({ width: 0, maxHeight: 480 })
     expect(context.styles?.variables?.['--color-background-ghost']).toBe('transparent')
@@ -283,6 +284,50 @@ describe('McpAppFrame', () => {
 
     const result = await app.callServerTool({ name: 'greet', arguments: { name: 'Ada' } })
     expect(result.content).toEqual([{ type: 'text', text: 'Hello, Ada.' }])
+  })
+
+  it('denies app tools by default, including direct protocol requests', async () => {
+    harness = await mountFrame({ onAuthorizeToolCall: undefined })
+    expect(harness.app.getHostCapabilities()?.serverTools).toBeUndefined()
+    const execute = vi.spyOn(harness.client, 'request')
+    const result = await harness.app.request({ method: 'tools/call', params: { name: 'greet', arguments: { name: 'Denied' } } })
+    expect(result).toMatchObject({ isError: true })
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('waits for explicit approval before executing a server tool', async () => {
+    let approve!: (allowed: boolean) => void
+    const onAuthorizeToolCall = vi.fn(() => new Promise<boolean>((resolve) => { approve = resolve }))
+    harness = await mountFrame({ onAuthorizeToolCall })
+    const execute = vi.spyOn(harness.client, 'request')
+    const response = harness.app.callServerTool({ name: 'greet', arguments: { name: 'Approved' } })
+    await waitFor(() => expect(onAuthorizeToolCall).toHaveBeenCalled())
+    expect(execute).not.toHaveBeenCalled()
+    approve(true)
+    expect((await response).content).toEqual([{ type: 'text', text: 'Hello, Approved.' }])
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a declined tool approval', async () => {
+    harness = await mountFrame({ onAuthorizeToolCall: async () => false })
+    const execute = vi.spyOn(harness.client, 'request')
+    const result = await harness.app.callServerTool({ name: 'greet', arguments: { name: 'Denied' } })
+    expect(result.isError).toBe(true)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('does not execute an approval that arrives after the frame closes', async () => {
+    let approve!: (allowed: boolean) => void
+    const onAuthorizeToolCall = vi.fn(() => new Promise<boolean>((resolve) => { approve = resolve }))
+    harness = await mountFrame({ onAuthorizeToolCall })
+    const execute = vi.spyOn(harness.client, 'request')
+    const response = harness.app.callServerTool({ name: 'greet', arguments: { name: 'Too late' } }).catch(() => null)
+    await waitFor(() => expect(onAuthorizeToolCall).toHaveBeenCalled())
+    await act(async () => { await harness!.app.requestTeardown() })
+    await waitFor(() => expect(root().dataset.status).toBe('closed'))
+    approve(true)
+    await response
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it('tells the app when the host theme changes', async () => {

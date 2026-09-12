@@ -155,6 +155,7 @@ export function App() {
                   setStatus(next)
                   record('frame', `status ${next}`)
                 }}
+                onAuthorizeToolCall={({ name }) => name === 'refresh_forecast'}
                 onInitialized={(info) => record('app', `initialized ${info.appInfo?.name}@${info.appInfo?.version}`)}
                 onDisplayModeChange={(mode) => record('frame', `display mode ${mode}`)}
                 onSizeChange={(size) => record('app', `size ${size.width ?? '·'}×${size.height ?? '·'}`)}
