@@ -1,0 +1,26 @@
+/*
+ * The app root. It paints nothing: the host frame supplies the surface, and a
+ * transparent document is what lets the app sit on the host's own color. The
+ * text defaults come from the theme so that plain markup inside an app reads
+ * as Material body text without a component around it.
+ */
+.m3e-mcp-app-theme {
+  min-block-size: 100%;
+}
+
+.m3e-mcp-app {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding-block: var(--m3e-mcp-safe-area-top, 0) var(--m3e-mcp-safe-area-bottom, 0);
+  padding-inline: var(--m3e-mcp-safe-area-left, 0) var(--m3e-mcp-safe-area-right, 0);
+  color: var(--m3e-sys-color-on-surface);
+  font-family: var(--m3e-sys-typescale-baseline-body-medium-font-family);
+  font-size: var(--m3e-sys-typescale-baseline-body-medium-font-size);
+  font-weight: var(--m3e-sys-typescale-baseline-body-medium-font-weight);
+  line-height: var(--m3e-sys-typescale-baseline-body-medium-line-height);
+  letter-spacing: var(--m3e-sys-typescale-baseline-body-medium-letter-spacing);
+}
+
+.m3e-mcp-app--fullscreen {
+  min-block-size: 100vh;
+}

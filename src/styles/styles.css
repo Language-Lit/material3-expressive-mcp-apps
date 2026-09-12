@@ -1,0 +1,9 @@
+/*
+ * @language-lit/material3-expressive-mcp-apps
+ *
+ * Component rules only. Tokens come from `@language-lit/material3-expressive/styles.css`,
+ * which consumers load alongside this file. Every selector lives under the
+ * `.m3e-mcp` namespace; the build fails otherwise.
+ */
+@import '../host/McpAppFrame.css';
+@import '../app/McpAppProvider.css';
