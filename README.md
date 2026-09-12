@@ -1,7 +1,7 @@
 # Material 3 Expressive for MCP Apps
 
 A React host frame for MCP Apps, plus a Material provider for the apps that
-run inside it. Version 0.1.0 is a verified local preview and has not been published.
+run inside it. Version 0.1.0 provides the host and app integration described below.
 
 The host renders `ui://` HTML resources in an isolated iframe, passes tool
 results, supplies Material-derived host styles, and supports inline, fullscreen
@@ -21,13 +21,10 @@ server tool; selecting a day updates model context; Add to chat reports a user
 message to the host. This is deterministic sample data with no model/backend.
 `npm run playground:build` builds both the host and a self-contained iframe app.
 
-## Consume a local package
+## Installation
 
 ```sh
-npm run build
-npm pack
-# In your consumer, install the resulting .tgz and these peers:
-npm install @language-lit/material3-expressive @modelcontextprotocol/client@^2.0.0 @modelcontextprotocol/ext-apps@^2.0.0 react react-dom
+npm install @language-lit/material3-expressive-mcp-apps@0.1.0 @language-lit/material3-expressive @modelcontextprotocol/client@^2.0.0 @modelcontextprotocol/ext-apps@^2.0.0 react react-dom
 ```
 
 Load `@language-lit/material3-expressive/styles.css`, then this package's
@@ -102,4 +99,3 @@ checks host and app layouts at 320, 390 and 1440px in light and dark mode, and
 verifies that the browser blocks an undeclared connection through CSP. It saves
 screenshots to a temporary directory. Tests use a real SDK connection and a
 local server; no credentials, LLM or external backend are needed.
-# material3-expressive-mcp-apps

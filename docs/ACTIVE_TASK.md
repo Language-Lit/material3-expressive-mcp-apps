@@ -1,5 +1,44 @@
 # Active task
 
+## T02 — Publish 0.1.0 to npm
+
+Status: complete
+Completed: 2026-09-12
+Approved: 2026-09-12 (owner requested npm publication before pushing)
+
+### Scope and expected files
+
+Publish the existing 0.1.0 public package to npm with public access and the
+latest tag. Update README installation instructions, specification release
+status and this task record. No API or implementation change; no Git push.
+
+### Acceptance checks
+
+- Aggregate verification and production playground build pass.
+- Inspect the packed artifact and publish that exact tarball.
+- Registry version, exports, peers and integrity match the release artifact.
+- Install the registry release in a clean consumer without legacy peer bypass.
+
+### Release evidence
+
+- Published `@language-lit/material3-expressive-mcp-apps@0.1.0` with public
+  access on 2026-09-12 after owner npm browser authentication.
+- `npm run verify` passed all 42 tests, types, build and package guard;
+  `npm run playground:build` passed. No runtime implementation changed.
+- Published the inspected 13-file tarball (45,599 bytes), SHA-1
+  `9923db96da67b500e74f13f4e9a39a3b03def4d6`. Downloading it from npm produced
+  byte-identical content; registry exports and dependencies match the contract.
+- The release artifact installed with strict peer resolution in an isolated
+  consumer. Both JS entries imported and the CSS export resolved successfully.
+- Registry version and tarball are live, access is public, and `latest` points
+  to 0.1.0. Package-name metadata took several minutes to propagate.
+- Installing by package name and then running clean `npm ci` with strict peer
+  resolution passed. The lockfile resolves the npm registry tarball; host/app
+  imports and CSS resolution pass. The consumer audit reports zero vulnerabilities.
+- No Git commit, tag, push or website deployment was performed by this task.
+
+---
+
 ## T01 — Material host and app integration for MCP Apps
 
 Status: complete

@@ -1,6 +1,6 @@
 # MCP Apps companion specification
 
-Status: implemented local preview, 0.1.0 unpublished
+Status: 0.1.0 published to npm on 2026-09-12
 Task: T01, approved 2026-09-12
 
 ## Product
