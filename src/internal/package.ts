@@ -4,4 +4,4 @@
  * release bump cannot leave the wire identity behind.
  */
 export const PACKAGE_NAME = '@language-lit/material3-expressive-mcp-apps'
-export const PACKAGE_VERSION = '0.2.0'
+export const PACKAGE_VERSION = '0.2.1'

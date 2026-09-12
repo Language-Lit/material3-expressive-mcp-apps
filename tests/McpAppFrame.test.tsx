@@ -115,7 +115,7 @@ describe('McpAppFrame', () => {
     expect(context.locale).toBe('pt-BR')
     expect(context.timeZone).toBe('America/Sao_Paulo')
     expect(context.platform).toBe('web')
-    expect(context.userAgent).toBe('@language-lit/material3-expressive-mcp-apps/0.2.0')
+    expect(context.userAgent).toBe('@language-lit/material3-expressive-mcp-apps/0.2.1')
     expect(context.toolInfo).toEqual({ id: 7, tool: expect.objectContaining({ name: 'greet' }) })
     expect(context.containerDimensions).toEqual({ width: 0, maxHeight: 480 })
     expect(context.styles?.variables?.['--color-background-ghost']).toBe('transparent')

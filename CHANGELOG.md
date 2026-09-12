@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-09-12
+
+- Expand the Material 3 Expressive peer range to include the published
+  `1.3.0-rc.1` prerelease line.
+
 ## 0.2.0 — 2026-09-12
 
 ### Migration

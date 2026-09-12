@@ -1,7 +1,7 @@
 # Material 3 Expressive for MCP Apps
 
 A React host frame for MCP Apps, plus a Material provider for the apps that
-run inside it. Version 0.2.0 provides the host and app integration described below.
+run inside it. Version 0.2.1 provides the host and app integration described below.
 
 The host renders `ui://` HTML resources in an isolated iframe, passes tool
 results, supplies Material-derived host styles, and supports inline, fullscreen
@@ -25,7 +25,7 @@ message to the host. This is deterministic sample data with no model/backend.
 ## Installation
 
 ```sh
-npm install @language-lit/material3-expressive-mcp-apps@0.2.0 @language-lit/material3-expressive @modelcontextprotocol/client@^2.0.0 @modelcontextprotocol/ext-apps@^2.0.0 react react-dom
+npm install @language-lit/material3-expressive-mcp-apps@0.2.1 @language-lit/material3-expressive @modelcontextprotocol/client@^2.0.0 @modelcontextprotocol/ext-apps@^2.0.0 react react-dom
 ```
 
 Load `@language-lit/material3-expressive/styles.css`, then this package's

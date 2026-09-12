@@ -1,5 +1,25 @@
 # Active task
 
+## T05 — 0.2.1 core prerelease compatibility
+
+Status: active
+Approved: 2026-09-12 (owner requested deployment of the current documentation
+site, which must install with the published `1.3.0-rc.1` core candidate.)
+
+### Scope
+
+Publish a peer-range-only patch allowing the current core prerelease line,
+`>=1.3.0-rc.1 <1.4.0`. Update package and lockfile versions, the release status,
+and this record. Verify package behavior and strict peer resolution; no API,
+implementation, or runtime dependency changes are included.
+
+### Acceptance
+
+- `npm run verify` and `npm run playground:build` pass at `0.2.1`.
+- npm publishes `0.2.1` with the expanded core peer range.
+- A strict site install resolves core `1.3.0-rc.1` and all three companions.
+
+
 ## T04 — Compatibility, release and deployment readiness
 
 Status: complete for compatibility, release and local deployment readiness;
